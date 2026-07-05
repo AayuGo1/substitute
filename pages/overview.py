@@ -27,22 +27,24 @@ This page performs:
       by the existing components in ``components/*``; this page only
       *adapts* data shapes and threads calls together.
 
-The reusable components consumed here
-(``components.navbar``, ``components.sidebar``, ``components.filters``,
-``components.summary_cards``, ``components.expandable_section``) were
-each built against their own small, documented Protocol/dataclass
-contracts that do not exactly match ``OverviewPageData``'s shape.
-Rather than modifying those components (out of scope) or duplicating
-their rendering here, this page defines minimal, local adapter
-functions that translate ``OverviewPageData`` into exactly the
-dataclasses those components already expect. This is wiring, not new
-business logic.
+Rendering order:
+    1. Navbar and sidebar shell (``components.navbar``,
+       ``components.sidebar``).
+    2. Filter bar (``components.filters``) — display/selection only;
+       filtering itself already happened upstream.
+    3. Top KPI cards, one per discovered section
+       (``components.cards``).
+    4. Fixed summary cards (``components.summary_cards``).
+    5. One expandable panel per discovered section
+       (``components.expandable_section``).
 
-``components/cards.py`` (used for the original top KPI row) is
-intentionally NOT wired here: its interface was never supplied to this
-review, and its exact contract cannot be safely guessed. The top KPI
-row is temporarily omitted with a note in this docstring rather than
-invented. Supply ``components/cards.py`` to complete this wiring.
+The reusable components consumed here were each built against their
+own small, documented Protocol/dataclass contracts that do not exactly
+match ``OverviewPageData``'s shape. Rather than modifying those
+components (out of scope) or duplicating their rendering here, this
+page defines minimal, local adapter functions that translate
+``OverviewPageData`` into exactly the dataclasses those components
+already expect. This is wiring, not new business logic.
 
 Known adaptation gaps, deliberately left visible rather than papered
 over:
@@ -50,8 +52,7 @@ over:
       formatted current date/time strings, and a "last updated"
       string. ``DashboardService`` computes none of these; placeholder
       values are used below and should be replaced once a real source
-      for them exists (for example a small navbar-config helper on
-      ``DashboardService`` or a dedicated formatting utility).
+      for them exists.
     - ``components.sidebar.SidebarConfig`` expects an app version and
       nav items; a static version string and
       ``components.sidebar.DEFAULT_NAV_ITEMS`` are used since no
@@ -60,24 +61,26 @@ over:
       option methods this page's filter *display* does not have a
       backing implementation for; a minimal local adapter derives
       month options and date bounds from
-      ``OverviewPageData.available_filters.date_range``. Quick-range
-      resolution falls back to the same bounds for every option since
-      no date-math utility was supplied. This should be replaced by a
-      real ``FilterService`` once one is available.
+      ``OverviewPageData.available_filters.date_range``. This should
+      be replaced by a real ``FilterService`` once one is available.
+    - ``components.cards.KPICardData`` requires ``sparkline_values``
+      and a formatted ``last_updated`` string that
+      ``services.kpi_service.SectionKPISummary`` was not confirmed to
+      carry. The adapter below reads them via ``getattr`` with safe
+      fallbacks (empty sparkline, "—" for missing timestamp) rather
+      than inventing sparkline history or a clock source. Once
+      ``services/kpi_service.py``'s exact fields are confirmed, this
+      can be tightened to direct attribute access.
     - ``components.summary_cards.SummaryCardData`` field names are
-      assumed to align with ``services.summary_service.SummaryCard``
-      via ``getattr`` with safe fallbacks, since that module's exact
-      field names were not supplied to this review.
+      likewise assumed via ``getattr`` with safe fallbacks, since
+      ``services/summary_service.py``'s exact field names were not
+      supplied to this review.
     - ``components.expandable_section.render_expandable_section``
       expects per-section daily/weekly/monthly chart lookups and a
       metrics table; ``OverviewPageData`` provides only a single
-      pre-built chart and no per-metric table. The local
-      ``_ChartServiceAdapter``/``_SectionServiceAdapter`` below expose
-      that single chart as all three trend slots and an empty metrics
-      table, so no chart is duplicated or reinvented — this should be
-      revisited once ``ChartService``/``SectionService``'s real,
-      richer methods (referenced in ``services/dashboard_service.py``
-      but not otherwise inspected here) are confirmed.
+      pre-built chart. The local adapters below expose that single
+      chart as the daily trend slot and leave weekly/monthly empty,
+      rather than duplicating or re-generating a chart.
 """
 
 from __future__ import annotations
@@ -88,6 +91,7 @@ from typing import Any, List, Optional, Sequence, Tuple
 
 import streamlit as st
 
+from components.cards import KPICardData, render_kpi_cards
 from components.expandable_section import (
     ChartService as ExpandableChartService,
     DashboardService as ExpandableDashboardService,
@@ -226,6 +230,74 @@ def _build_filter_service(page_data: OverviewPageData) -> FilterService:
     min_date = date_range.start.date() if date_range and date_range.start else today
     max_date = date_range.end.date() if date_range and date_range.end else today
     return _OverviewFilterService(min_date=min_date, max_date=max_date)
+
+
+# ----------------------------------------------------------------------
+# Adapter: OverviewPageData.top_kpi_cards -> KPICardData
+# ----------------------------------------------------------------------
+
+def _format_last_updated(summary: Any) -> str:
+    """
+    Formats a KPI summary's timestamp for display, tolerating summaries
+    that carry no timestamp field at all.
+
+    Args:
+        summary: A ``SectionKPISummary`` instance.
+
+    Returns:
+        A formatted "HH:MM:SS" string, or "—" if no timestamp is
+        available.
+    """
+    timestamp = getattr(summary, "timestamp", None)
+    if isinstance(timestamp, datetime):
+        return timestamp.strftime("%H:%M:%S")
+    return "—"
+
+
+def _build_kpi_card_data(page_data: OverviewPageData) -> List[KPICardData]:
+    """
+    Adapts each ``services.kpi_service.SectionKPISummary`` on
+    ``OverviewPageData.top_kpi_cards`` into the
+    ``components.cards.KPICardData`` dataclass that component already
+    declares.
+
+    ``sparkline_values`` and ``last_updated`` are read defensively via
+    ``getattr`` because ``SectionKPISummary``'s exact field set was not
+    confirmed for this review; when absent, an empty sparkline and a
+    "—" timestamp are used rather than inventing history data or a
+    clock source. ``trend_direction`` is normalized to the
+    ``"up"``/``"down"``/``"flat"`` literal ``components.cards`` expects,
+    treating any unrecognized/unknown trend as ``"flat"``.
+
+    Args:
+        page_data: The fully resolved page data for this session.
+
+    Returns:
+        A list of ``KPICardData`` ready for ``render_kpi_cards``.
+    """
+    cards: List[KPICardData] = []
+    for summary in page_data.top_kpi_cards:
+        raw_trend = getattr(getattr(summary, "trend", None), "value", "flat")
+        trend_direction = raw_trend if raw_trend in ("up", "down", "flat") else "flat"
+
+        current_value = getattr(
+            summary, "last_value", getattr(summary, "last_registered_value", 0.0)
+        )
+
+        cards.append(
+            KPICardData(
+                section_name=getattr(
+                    summary, "display_name", getattr(summary, "name", "")
+                ),
+                current_value=current_value or 0.0,
+                unit=getattr(summary, "unit", ""),
+                trend_direction=trend_direction,
+                percentage_change=getattr(summary, "percentage_change", 0.0) or 0.0,
+                sparkline_values=getattr(summary, "sparkline_values", []) or [],
+                last_updated=_format_last_updated(summary),
+            )
+        )
+    return cards
 
 
 # ----------------------------------------------------------------------
@@ -418,12 +490,11 @@ def render_overview_page() -> None:
            ``components.sidebar``).
         2. Filter bar (``components.filters``) — display/selection
            only; filtering itself already happened upstream.
-        3. Fixed summary cards (``components.summary_cards``).
-        4. One expandable panel per discovered section
+        3. Top KPI cards, one per discovered section
+           (``components.cards``).
+        4. Fixed summary cards (``components.summary_cards``).
+        5. One expandable panel per discovered section
            (``components.expandable_section``).
-
-    The top KPI row (previously ``components.cards``) is intentionally
-    omitted — see module docstring.
 
     Returns:
         None. This function renders directly into the current
@@ -445,6 +516,9 @@ def render_overview_page() -> None:
 
     filter_service = _build_filter_service(page_data)
     _criteria: FilterCriteria = render_filter_bar(filter_service)
+
+    kpi_cards = _build_kpi_card_data(page_data)
+    render_kpi_cards(kpi_cards)
 
     summary_cards = _build_summary_card_data(page_data)
     render_summary_cards(summary_cards)
