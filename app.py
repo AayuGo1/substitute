@@ -375,7 +375,7 @@ def _handle_startup(
         screen was shown instead and rendering should stop for this
         run.
     """
-       pending_error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
+    pending_error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
 
     if pending_error is not None:
         st.error(f"Application Error:\n\n{pending_error}")
