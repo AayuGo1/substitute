@@ -523,7 +523,7 @@ def render_overview_page() -> None:
     summary_cards = _build_summary_card_data(page_data)
     render_summary_cards(summary_cards)
 
-   # _render_expandable_sections(page_data)
+    _render_expandable_sections(page_data)
 
 
 
