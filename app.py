@@ -247,54 +247,40 @@ def _passthrough_validator_adapter() -> object:
 
 @st.cache_resource(show_spinner=False)
 def _build_dashboard_service() -> DashboardService:
-    """
-    Construct the singleton ``DashboardService`` for this app session,
-    wiring in the real ``WorkbookService`` (backed by
-    ``WorkbookRepository``) plus ``SectionService``, ``FilterService``,
-    ``KPIService``, ``SummaryService``, and ``ChartService``.
-
-    Cached with ``st.cache_resource`` so the same instance (and its
-    injected collaborators) is reused across reruns rather than
-    reconstructed on every interaction; this is an application wiring
-    concern, not a data-loading or business-logic concern.
-
-    Returns:
-        A fully constructed ``DashboardService`` instance.
-    """
     repository = WorkbookRepository(
         loader=_github_loader_adapter(),
         validator=_passthrough_validator_adapter(),
         parser_service=ParserService(),
     )
-  workbook_service = WorkbookService(repository=repository)
 
-  section_service = SectionService(workbook_service)
+    workbook_service = WorkbookService(repository=repository)
 
-  filter_service = FilterService()
+    section_service = SectionService(workbook_service)
 
-  kpi_service = KPIService(section_service)
+    filter_service = FilterService()
 
-  summary_service = SummaryService(
-    workbook_service,
-    section_service,
-    filter_service,
-    kpi_service,
-)
+    kpi_service = KPIService(section_service)
 
-chart_service = ChartService(
-    section_service,
-    filter_service,
-)
+    summary_service = SummaryService(
+        workbook_service,
+        section_service,
+        filter_service,
+        kpi_service,
+    )
 
-return DashboardService(
-    workbook_service=workbook_service,
-    section_service=section_service,
-    filter_service=filter_service,
-    kpi_service=kpi_service,
-    summary_service=summary_service,
-    chart_service=chart_service,
-)
+    chart_service = ChartService(
+        section_service,
+        filter_service,
+    )
 
+    return DashboardService(
+        workbook_service=workbook_service,
+        section_service=section_service,
+        filter_service=filter_service,
+        kpi_service=kpi_service,
+        summary_service=summary_service,
+        chart_service=chart_service,
+    )
 def _request_refresh() -> None:
     """
     Mark the next workbook load as a forced refresh and trigger a
