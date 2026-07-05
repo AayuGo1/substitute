@@ -101,7 +101,7 @@ import streamlit as st
 
 from components.layout import configure_page, inject_global_styles, page_container
 
-from components.error_screen import render_error_screen
+
 from components.loading_screen import render_loading_screen
 from components.theme import THEME, get_global_css
 
@@ -377,7 +377,10 @@ def _handle_startup(
     """
     pending_error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
     if pending_error is not None:
-        render_error_screen(pending_error, on_retry=on_retry)
+       st.error(f"Application Error:\n\n{pending_error}")
+
+if st.button("Retry"):
+    on_retry()
         return False
 
     with st.spinner("Loading workbook..."):
@@ -389,7 +392,10 @@ def _handle_startup(
         # render the error screen immediately rather than waiting for
         # the next run.
         error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
-        render_error_screen(error, on_retry=on_retry)
+      st.error(f"Error loading dashboard:\n\n{error}")
+
+if st.button("Retry"):
+    on_retry()
         return False
     if not result.expandable_sections:
         st.warning(
