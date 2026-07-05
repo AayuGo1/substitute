@@ -40,18 +40,22 @@ Collaborators actually used (matching the real, shipped contracts)
         ``components.layout`` in the shipped codebase; these are the
         only layout helpers that actually exist.)
 
-    components.empty_state.render_empty_workbook_screen
-        Reusable loading/error/empty-state screens (unchanged).
-
     data.github_loader.load_workbook_from_github
         The only concrete workbook-loading primitive that exists.
         Returns an in-memory ``BytesIO`` stream of the downloaded
-        workbook's raw bytes. It does not satisfy ``LoaderLike`` on its
-        own (no ``.load(source_path)``, no
-        ``.raw_workbook``/``.success``/``.error``/``.metadata``
-        attributes), so it is wrapped here by a minimal structural
+        workbook's raw bytes (NOT a parsed workbook). It does not
+        satisfy ``LoaderLike`` on its own (no ``.load(source_path)``,
+        no ``.raw_workbook``/``.success``/``.error``/``.metadata``
+        attributes, and its return value is not an ``openpyxl``
+        ``Workbook``), so it is wrapped here by a minimal structural
         adapter — not a new service class, just the "small adapter
-        calls" this file was always meant to own.
+        calls" this file was always meant to own. The adapter converts
+        the downloaded ``BytesIO`` stream into an actual
+        ``openpyxl.workbook.workbook.Workbook`` via
+        ``openpyxl.load_workbook(filename=stream, data_only=True)``,
+        since ``WorkbookRepository``/``ParserService`` require a
+        parsed workbook object (with ``.sheetnames`` etc.), not a raw
+        byte stream.
 
     data.repository.WorkbookRepository(loader, validator, parser_service)
         The real repository contract. ``validator`` must satisfy
@@ -71,15 +75,20 @@ Collaborators actually used (matching the real, shipped contracts)
     services.section_service.SectionService(workbook_service)
     services.filter_service.FilterService()
     services.kpi_service.KPIService(section_service)
-    services.summary_service.SummaryService(workbook_service, section_service)
-    services.chart_service.ChartService(section_service)
+    services.summary_service.SummaryService(
+        workbook_service, section_service, filter_service, kpi_service
+    )
+    services.chart_service.ChartService(section_service, filter_service)
         Constructed with exactly the dependencies each constructor
-        requires, wiring the dependency graph in dependency order:
-        ``workbook_service`` first, then ``section_service`` (which
-        depends on it), then ``filter_service`` (standalone), then
-        ``kpi_service``/``summary_service``/``chart_service`` (which
-        depend on ``section_service`` and, for ``summary_service``,
-        also ``workbook_service``).
+        requires, confirmed against the real source of each module.
+        The dependency graph is built in dependency order:
+        ``workbook_service`` -> ``section_service`` ->
+        ``filter_service`` -> ``kpi_service`` -> (``summary_service``,
+        ``chart_service``) -> ``dashboard_service``, since
+        ``summary_service`` requires ``filter_service`` and
+        ``kpi_service`` in addition to ``workbook_service`` and
+        ``section_service``, and ``chart_service`` requires
+        ``filter_service`` in addition to ``section_service``.
 
     services.dashboard_service.DashboardService
         The real, 6-collaborator-injected service. Its entry point is
@@ -101,6 +110,7 @@ from types import SimpleNamespace
 from typing import Callable, List, Optional
 
 import streamlit as st
+from openpyxl import load_workbook
 
 from components.layout import configure_page, inject_global_styles, page_container
 from components.theme import THEME, get_global_css
@@ -190,14 +200,27 @@ def _github_loader_adapter() -> object:
     Build a ``LoaderLike``-satisfying object around the real
     ``load_workbook_from_github`` function.
 
-    ``data.github_loader`` exposes a bare, zero-argument function
-    returning an in-memory ``BytesIO`` stream of the downloaded
-    workbook's raw bytes, not an object with ``.raw_workbook``,
-    ``.source_path``, ``.metadata``, ``.success``, ``.error`` as
-    ``WorkbookRepository`` requires. This wraps it structurally,
-    without introducing any new business-logic class — the download
-    behavior remains entirely inside ``data.github_loader``,
-    unmodified.
+    ``data.github_loader.load_workbook_from_github()`` returns an
+    in-memory ``BytesIO`` stream of the workbook's raw downloaded
+    bytes — it performs no Excel parsing of its own.
+    ``WorkbookRepository`` and ``ParserService`` require an
+    already-open ``openpyxl`` ``Workbook`` object (exposing
+    ``.sheetnames`` and worksheet access), not a raw byte stream. This
+    adapter is therefore responsible for:
+
+        1. Calling ``load_workbook_from_github()`` to obtain the
+           downloaded ``BytesIO`` stream.
+        2. Converting that stream into a parsed ``openpyxl`` workbook
+           via ``openpyxl.load_workbook(filename=stream,
+           data_only=True)``.
+        3. Wrapping the parsed workbook in the small structural object
+           ``WorkbookRepository`` expects (``.raw_workbook``,
+           ``.source_path``, ``.metadata``, ``.success``, ``.error``).
+
+    No new service class is introduced — the download behavior remains
+    entirely inside ``data.github_loader``, unmodified; this function
+    only performs the byte-stream-to-workbook conversion and the
+    structural wrapping ``WorkbookRepository`` already requires.
 
     Returns:
         An object exposing ``.load(source_path) -> SimpleNamespace``
@@ -206,7 +229,11 @@ def _github_loader_adapter() -> object:
 
     def _load(source_path: str) -> SimpleNamespace:
         try:
-            raw_workbook = load_workbook_from_github()
+            workbook_stream = load_workbook_from_github()
+            raw_workbook = load_workbook(
+                filename=workbook_stream,
+                data_only=True,
+            )
         except Exception as exc:  # noqa: BLE001 - normalized by WorkbookRepository
             return SimpleNamespace(
                 raw_workbook=None,
@@ -258,7 +285,14 @@ def _build_dashboard_service() -> DashboardService:
     wiring in the real ``WorkbookService`` (backed by
     ``WorkbookRepository``) plus ``SectionService``, ``FilterService``,
     ``KPIService``, ``SummaryService``, and ``ChartService``, each
-    receiving exactly the dependencies its own constructor requires.
+    receiving exactly the dependencies its own constructor requires:
+
+        - ``SectionService(workbook_service)``
+        - ``FilterService()`` (no dependencies)
+        - ``KPIService(section_service)``
+        - ``SummaryService(workbook_service, section_service,
+          filter_service, kpi_service)``
+        - ``ChartService(section_service, filter_service)``
 
     Cached with ``st.cache_resource`` so the same instance (and its
     injected collaborators) is reused across reruns rather than
@@ -289,10 +323,13 @@ def _build_dashboard_service() -> DashboardService:
     summary_service = SummaryService(
         workbook_service=workbook_service,
         section_service=section_service,
+        filter_service=filter_service,
+        kpi_service=kpi_service,
     )
 
     chart_service = ChartService(
         section_service=section_service,
+        filter_service=filter_service,
     )
 
     return DashboardService(
