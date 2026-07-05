@@ -200,7 +200,7 @@ def _github_loader_adapter() -> object:
 
     def _load(source_path: str) -> SimpleNamespace:
         try:
-            raw_workbook = load_workbook_from_github(get_github_config())
+            raw_workbook = load_workbook_from_github()
         except Exception as exc:  # noqa: BLE001 - normalized by WorkbookRepository
             return SimpleNamespace(
                 raw_workbook=None,
@@ -268,13 +268,13 @@ def _build_dashboard_service() -> DashboardService:
     )
   workbook_service = WorkbookService(repository=repository)
 
-section_service = SectionService(workbook_service)
+  section_service = SectionService(workbook_service)
 
-filter_service = FilterService()
+  filter_service = FilterService()
 
-kpi_service = KPIService(section_service)
+  kpi_service = KPIService(section_service)
 
-summary_service = SummaryService(
+  summary_service = SummaryService(
     workbook_service,
     section_service,
     filter_service,
