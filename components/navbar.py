@@ -311,7 +311,7 @@ def _render_left_section(config: NavbarConfig) -> None:
         <div class="em-navbar-left">
             {logo_html}
             <div class="em-navbar-titles">
-                <span class="em-navbar-title">{config.dashboard_title}</span>
+                <span class="em-navbar-title">{"TEST NAVBAR"}</span>
                 <span class="em-navbar-workbook">{config.workbook_name}</span>
             </div>
         </div>
