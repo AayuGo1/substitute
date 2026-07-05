@@ -6,8 +6,9 @@ Dashboard.
 
 This module is a PURE ORCHESTRATION LAYER. It:
     - Applies the global theme, layout, and CSS.
-    - Initializes ``DashboardService`` (dependency-injected with the
-      existing ``Loader``, ``Cache``, and ``Repository``).
+    - Initializes the real ``DashboardService`` (dependency-injected
+      with ``WorkbookService``, ``SectionService``, ``FilterService``,
+      ``KPIService``, ``SummaryService``, and ``ChartService``).
     - Configures the Streamlit page (title, icon, wide layout).
     - Registers the multipage navigation structure.
     - Initializes session state.
@@ -20,60 +21,71 @@ This module never:
     - Parses Excel directly.
     - Generates charts.
 
-All loading, caching, and repository access is delegated to the
-existing ``Loader``, ``Cache``, and ``Repository`` implementations;
-this file only wires them together and reacts to the outcome.
+Data access is delegated entirely to ``WorkbookService`` /
+``WorkbookRepository`` / the GitHub loader; this file only wires them
+together and reacts to the outcome.
 
-Expected collaborators
+Collaborators actually used (matching the real, shipped contracts)
 ---------------------------------------------------------------
-This entry point depends only on the following, all assumed complete
-and unmodified:
+    components.theme.THEME / get_global_css()
+        The dashboard's design-system dataclass and the function that
+        derives its global CSS block (there is no
+        ``apply_global_theme`` helper in ``components.theme``).
 
-    components.theme.THEME
-        Global design tokens, applied via ``apply_global_theme``.
-
-    layout.py
-        configure_page() -> None
-            Applies ``st.set_page_config`` (title, icon, wide layout).
-        apply_global_css() -> None
-            Injects any global CSS derived from THEME that every page
-            shares (independent of the per-component CSS each
-            component already injects itself).
-        main_container() -> ContextManager[None]
-            Context manager wrapping primary content for consistent
-            spacing/max-width.
+    components.layout
+        configure_page(title, icon) -> None
+        inject_global_styles(css) -> None
+        page_container() -> ContextManager[None]
+        (There is no project-root ``layout`` module distinct from
+        ``components.layout`` in the shipped codebase; these are the
+        only layout helpers that actually exist.)
 
     components.loading_screen.render_loading_screen
-        render_loading_screen(message: str) -> None
-            Reusable loading-state screen.
-
     components.error_screen.render_error_screen
-        render_error_screen(error: Exception, on_retry: Callable[[], None]) -> None
-            Reusable error-state screen with a retry action.
-
     components.empty_state.render_empty_workbook_screen
-        render_empty_workbook_screen(on_retry: Callable[[], None]) -> None
-            Reusable empty-workbook screen with a retry action.
+        Reusable loading/error/empty-state screens (unchanged).
 
-    services.loader.Loader
-    services.cache.Cache
-    services.repository.Repository
-        Existing data-access primitives; this file performs no
-        loading/parsing logic itself, only injects these into
-        ``DashboardService``.
+    data.github_loader.load_workbook_from_github
+        The only concrete workbook-loading primitive that exists.
+        Returns a raw ``openpyxl.Workbook`` given a ``GitHubConfig``.
+        It does not satisfy ``LoaderLike`` on its own (no
+        ``.load(source_path)``, no ``.raw_workbook``/``.success``/
+        ``.error``/``.metadata`` attributes), so it is wrapped here by
+        a minimal structural adapter — not a new service class, just
+        the "small adapter calls" this file was always meant to own.
+
+    data.repository.WorkbookRepository(loader, validator, parser_service)
+        The real repository contract. ``validator`` must satisfy
+        ``ValidatorLike``; since no validator implementation exists
+        yet in the project, a trivial pass-through adapter (structural,
+        not a new class) is used here, reporting every load as valid
+        with no re-discovered structure. This should be replaced with
+        the real validator as soon as ``data/validator.py`` exists —
+        flagged, not silently invented.
+
+    services.parser_service.ParserService
+        The real, unmodified parser used to build ``WorkbookRepository``.
+
+    services.workbook_service.WorkbookService(repository)
+        The real façade ``DashboardService`` depends on.
+
+    services.section_service.SectionService
+    services.filter_service.FilterService
+    services.kpi_service.KPIService
+    services.summary_service.SummaryService
+    services.chart_service.ChartService
+        Constructed exactly as ``pages/overview.py`` already imports
+        them (``from services.<name> import <Name>``), since that is
+        the only existing reference to their concrete location.
 
     services.dashboard_service.DashboardService
-        DashboardService(loader: Loader, cache: Cache, repository: Repository)
-        load_workbook(force_refresh: bool = False) -> WorkbookLoadResult
-            Loads (or reloads) the workbook via the injected
-            collaborators and reports its outcome without performing
-            any calculation itself.
+        The real, 6-collaborator-injected service. Its entry point is
+        ``get_overview_page_data(source_path, ...)``, not
+        ``load_workbook(force_refresh=...)``.
 
-    pages/*.py
-        Existing Streamlit multipage page modules (overview,
-        departments, air_compressor, freon_monitoring, water, energy,
-        utilities, settings), each consuming ``DashboardService`` and
-        the reusable UI components on its own.
+    config.github.get_github_config
+        Supplies the ``GitHubConfig`` used both as the loader's source
+        and as the nominal ``source_path`` identity for this workbook.
 
 If any concrete collaborator signature differs from the above, only
 the small adapter calls in this file need to change.
@@ -82,25 +94,46 @@ the small adapter calls in this file need to change.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Callable, List, Optional
 
 import streamlit as st
 
-import layout
+from components.layout import configure_page, inject_global_styles, page_container
 from components.empty_state import render_empty_workbook_screen
 from components.error_screen import render_error_screen
 from components.loading_screen import render_loading_screen
-from components.theme import THEME, apply_global_theme
-from services.cache import Cache
-from services.dashboard_service import DashboardService, WorkbookLoadResult
-from services.loader import Loader
-from services.repository import Repository
+from components.theme import THEME, get_global_css
+
+from config.github import get_github_config
+
+from data.github_loader import load_workbook_from_github
+from data.repository import WorkbookRepository
+
+from services.chart_service import ChartService
+from services.dashboard_service import DashboardService, OverviewPageData
+from services.filter_service import FilterService
+from services.kpi_service import KPIService
+from services.parser_service import ParserService
+from services.section_service import SectionService
+from services.summary_service import SummaryService
+from services.workbook_service import WorkbookService
 
 __all__ = ["main"]
 
-_SESSION_KEY_WORKBOOK_STATE = "em_app__workbook_state"
+_SESSION_KEY_PAGE_DATA = "em_app__overview_page_data"
 _SESSION_KEY_LOAD_ERROR = "em_app__load_error"
 _SESSION_KEY_FORCE_REFRESH = "em_app__force_refresh"
+
+_DASHBOARD_TITLE = "Engineering Monitoring Dashboard"
+_DASHBOARD_ICON = "\U0001F3ED"
+
+# Nominal, stable identifier for the single GitHub-backed workbook this
+# app serves. The real loader (data.github_loader) resolves the actual
+# source location from config.github.get_github_config(), so this value
+# is only used as WorkbookService/WorkbookRepository's "source_path"
+# bookkeeping key and cache identity — never as a file path.
+_WORKBOOK_SOURCE_PATH = "github-workbook"
 
 
 @dataclass(frozen=True)
@@ -144,20 +177,86 @@ def _initialize_session_state() -> None:
     default values are present so subsequent reads never raise
     ``KeyError``.
     """
-    if _SESSION_KEY_WORKBOOK_STATE not in st.session_state:
-        st.session_state[_SESSION_KEY_WORKBOOK_STATE] = None
+    if _SESSION_KEY_PAGE_DATA not in st.session_state:
+        st.session_state[_SESSION_KEY_PAGE_DATA] = None
     if _SESSION_KEY_LOAD_ERROR not in st.session_state:
         st.session_state[_SESSION_KEY_LOAD_ERROR] = None
     if _SESSION_KEY_FORCE_REFRESH not in st.session_state:
         st.session_state[_SESSION_KEY_FORCE_REFRESH] = False
 
 
+def _github_loader_adapter() -> object:
+    """
+    Build a ``LoaderLike``-satisfying object around the real
+    ``load_workbook_from_github`` function.
+
+    ``data.github_loader`` exposes a bare function returning an
+    ``openpyxl.Workbook``, not an object with ``.raw_workbook``,
+    ``.source_path``, ``.metadata``, ``.success``, ``.error`` as
+    ``WorkbookRepository`` requires. This wraps it structurally,
+    without introducing any new business-logic class — the download,
+    caching, and TTL behavior all remain entirely inside
+    ``data.github_loader``, unmodified.
+
+    Returns:
+        An object exposing ``.load(source_path) -> SimpleNamespace``
+        satisfying ``data.repository.SupportsRawWorkbook``.
+    """
+
+    def _load(source_path: str) -> SimpleNamespace:
+        try:
+            raw_workbook = load_workbook_from_github(get_github_config())
+        except Exception as exc:  # noqa: BLE001 - normalized by WorkbookRepository
+            return SimpleNamespace(
+                raw_workbook=None,
+                source_path=source_path,
+                metadata=None,
+                success=False,
+                error=str(exc),
+            )
+        return SimpleNamespace(
+            raw_workbook=raw_workbook,
+            source_path=source_path,
+            metadata=None,
+            success=True,
+            error=None,
+        )
+
+    return SimpleNamespace(load=_load)
+
+
+def _passthrough_validator_adapter() -> object:
+    """
+    Build a ``ValidatorLike``-satisfying object that reports every
+    loaded workbook as valid, with no pre-discovered structure.
+
+    No validator implementation exists yet anywhere in the project
+    (``data/validator.py`` is referenced by ``WorkbookRepository`` but
+    was never supplied). Rather than inventing real validation logic —
+    which would be a new architectural component — this adapter is a
+    deliberately inert stand-in: it lets ``ParserService`` perform its
+    own structure discovery (since ``structure`` is ``None``) and
+    raises no validation errors of its own. It should be replaced with
+    the real validator as soon as one exists.
+
+    Returns:
+        An object exposing ``.validate(raw_workbook) -> SimpleNamespace``
+        satisfying ``data.repository.SupportsValidationResult``.
+    """
+
+    def _validate(raw_workbook: object) -> SimpleNamespace:
+        return SimpleNamespace(is_valid=True, structure=None, errors=[], warnings=[])
+
+    return SimpleNamespace(validate=_validate)
+
+
 @st.cache_resource(show_spinner=False)
 def _build_dashboard_service() -> DashboardService:
     """
     Construct the singleton ``DashboardService`` for this app session,
-    wiring in the existing ``Loader``, ``Cache``, and ``Repository``
-    collaborators via dependency injection.
+    wiring in the real ``WorkbookService`` (backed by
+    ``WorkbookRepository``) plus ``SectionService``, ``FilterService``,
+    ``KPIService``, ``SummaryService``, and ``ChartService``.
 
     Cached with ``st.cache_resource`` so the same instance (and its
     injected collaborators) is reused across reruns rather than
@@ -167,10 +266,21 @@ def _build_dashboard_service() -> DashboardService:
     Returns:
         A fully constructed ``DashboardService`` instance.
     """
-    loader = Loader()
-    cache = Cache()
-    repository = Repository(loader=loader, cache=cache)
-    return DashboardService(loader=loader, cache=cache, repository=repository)
+    repository = WorkbookRepository(
+        loader=_github_loader_adapter(),
+        validator=_passthrough_validator_adapter(),
+        parser_service=ParserService(),
+    )
+    workbook_service = WorkbookService(repository=repository)
+
+    return DashboardService(
+        workbook_service=workbook_service,
+        section_service=SectionService(),
+        filter_service=FilterService(),
+        kpi_service=KPIService(),
+        summary_service=SummaryService(),
+        chart_service=ChartService(),
+    )
 
 
 def _request_refresh() -> None:
@@ -179,46 +289,48 @@ def _request_refresh() -> None:
     rerun.
 
     This is passed as the retry/refresh callback to the reusable
-    loading, error, and empty-workbook screens, as well as to the
-    navbar's refresh action on individual pages. It performs no
-    loading itself — it only flags intent and lets the normal
-    ``main()`` flow re-invoke ``DashboardService.load_workbook``.
+    loading, error, and empty-workbook screens. It performs no loading
+    itself — it only flags intent and lets the normal ``main()`` flow
+    re-invoke ``DashboardService.get_overview_page_data``.
     """
     st.session_state[_SESSION_KEY_FORCE_REFRESH] = True
     st.session_state[_SESSION_KEY_LOAD_ERROR] = None
+    st.session_state[_SESSION_KEY_PAGE_DATA] = None
     st.rerun()
 
 
-def _load_workbook(dashboard_service: DashboardService) -> Optional[WorkbookLoadResult]:
+def _load_overview_page_data(
+    dashboard_service: DashboardService,
+) -> Optional[OverviewPageData]:
     """
-    Load (or refresh) the workbook via ``DashboardService``, updating
-    session state with the outcome.
+    Load the Overview page's full data set via ``DashboardService``,
+    updating session state with the outcome.
 
-    All actual loading, caching, and repository access happens inside
-    ``DashboardService`` and its injected collaborators (``Loader``,
-    ``Cache``, ``Repository``); this function only invokes that call,
-    interprets success/failure, and stores the result for the
-    remainder of this run.
+    All actual loading, validation, parsing, and aggregation happens
+    inside ``DashboardService`` and its injected collaborators; this
+    function only invokes ``get_overview_page_data``, interprets
+    success/failure, and stores the result for the remainder of this
+    run.
 
     Args:
         dashboard_service: The initialized dashboard service.
 
     Returns:
-        The ``WorkbookLoadResult`` on success, or ``None`` if loading
+        The ``OverviewPageData`` on success, or ``None`` if loading
         raised an exception (in which case the exception is recorded
         in session state for the error screen).
     """
-    force_refresh = st.session_state.get(_SESSION_KEY_FORCE_REFRESH, False)
-
     try:
-        result = dashboard_service.load_workbook(force_refresh=force_refresh)
+        result = dashboard_service.get_overview_page_data(
+            source_path=_WORKBOOK_SOURCE_PATH
+        )
     except Exception as exc:  # noqa: BLE001 - surfaced via the reusable error screen
         st.session_state[_SESSION_KEY_LOAD_ERROR] = exc
-        st.session_state[_SESSION_KEY_WORKBOOK_STATE] = None
+        st.session_state[_SESSION_KEY_PAGE_DATA] = None
         return None
 
     st.session_state[_SESSION_KEY_LOAD_ERROR] = None
-    st.session_state[_SESSION_KEY_WORKBOOK_STATE] = result
+    st.session_state[_SESSION_KEY_PAGE_DATA] = result
     st.session_state[_SESSION_KEY_FORCE_REFRESH] = False
     return result
 
@@ -270,16 +382,17 @@ def _handle_startup(
 
     with st.spinner("Loading workbook..."):
         render_loading_screen("Connecting to workbook source...")
-        result = _load_workbook(dashboard_service)
+        result = _load_overview_page_data(dashboard_service)
 
     if result is None:
-        # _load_workbook already recorded the exception; render the
-        # error screen immediately rather than waiting for the next run.
+        # _load_overview_page_data already recorded the exception;
+        # render the error screen immediately rather than waiting for
+        # the next run.
         error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
         render_error_screen(error, on_retry=on_retry)
         return False
 
-    if result.is_empty:
+    if not result.expandable_sections:
         render_empty_workbook_screen(on_retry=on_retry)
         return False
 
@@ -295,7 +408,9 @@ def main() -> None:
         2. Page configuration (title, icon, wide layout).
         3. Session state initialization.
         4. ``DashboardService`` construction via dependency injection
-           of the existing ``Loader``, ``Cache``, and ``Repository``.
+           of the real ``WorkbookService``, ``SectionService``,
+           ``FilterService``, ``KPIService``, ``SummaryService``, and
+           ``ChartService``.
         5. Workbook loading/refresh, with loading, error, and empty
            states handled via the reusable screens.
         6. Multipage navigation registration once a workbook is
@@ -308,15 +423,14 @@ def main() -> None:
     Returns:
         None.
     """
-    layout.configure_page()
-    apply_global_theme(THEME)
-    layout.apply_global_css()
+    configure_page(_DASHBOARD_TITLE, _DASHBOARD_ICON)
+    inject_global_styles(get_global_css())
 
     _initialize_session_state()
 
     dashboard_service = _build_dashboard_service()
 
-    with layout.main_container():
+    with page_container():
         startup_succeeded = _handle_startup(dashboard_service, on_retry=_request_refresh)
 
     if not startup_succeeded:
