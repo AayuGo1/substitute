@@ -29,7 +29,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-
 @dataclass(frozen=True)
 class GitHubConfig:
     """Immutable configuration describing the workbook's GitHub source.
@@ -50,12 +49,12 @@ class GitHubConfig:
             module performs no downloading itself; it only carries the
             configured timeout value for the loader to use.
     """
-       repository_owner: str = "aayugo1"
-       repository_name: str = "substitute"
-       branch: str = "main"
-       workbook_filename: str = "Daily energy Monitoring.xlsx"
-       raw_base_url: str = "raw.githubusercontent.com"
-       request_timeout_seconds: float = 15.0
+    repository_owner: str = "aayugo1"
+    repository_name: str = "substitute"
+    branch: str = "main"
+    workbook_filename: str = "Daily energy Monitoring.xlsx"
+    raw_base_url: str = "raw.githubusercontent.com"
+    request_timeout_seconds: float = 15.0
 
     def build_raw_file_url(self) -> str:
         """Builds the raw file URL for this configuration's workbook.
