@@ -375,28 +375,30 @@ def _handle_startup(
         screen was shown instead and rendering should stop for this
         run.
     """
-    pending_error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
-    if pending_error is not None:
-       st.error(f"Application Error:\n\n{pending_error}")
+       pending_error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
 
-if st.button("Retry"):
-    on_retry()
+    if pending_error is not None:
+        st.error(f"Application Error:\n\n{pending_error}")
+
+        if st.button("Retry"):
+            on_retry()
+
         return False
 
     with st.spinner("Loading workbook..."):
-        render_loading_screen("Connecting to workbook source...")
+        st.info("🔄 Connecting to workbook source...")
         result = _load_overview_page_data(dashboard_service)
 
     if result is None:
-        # _load_overview_page_data already recorded the exception;
-        # render the error screen immediately rather than waiting for
-        # the next run.
         error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
-      st.error(f"Error loading dashboard:\n\n{error}")
 
-if st.button("Retry"):
-    on_retry()
+        st.error(f"Error loading dashboard:\n\n{error}")
+
+        if st.button("Retry"):
+            on_retry()
+
         return False
+
     if not result.expandable_sections:
         st.warning(
             "No engineering sections were found in the workbook. "
