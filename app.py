@@ -45,12 +45,13 @@ Collaborators actually used (matching the real, shipped contracts)
 
     data.github_loader.load_workbook_from_github
         The only concrete workbook-loading primitive that exists.
-        Returns a raw ``openpyxl.Workbook`` given a ``GitHubConfig``.
-        It does not satisfy ``LoaderLike`` on its own (no
-        ``.load(source_path)``, no ``.raw_workbook``/``.success``/
-        ``.error``/``.metadata`` attributes), so it is wrapped here by
-        a minimal structural adapter — not a new service class, just
-        the "small adapter calls" this file was always meant to own.
+        Returns an in-memory ``BytesIO`` stream of the downloaded
+        workbook's raw bytes. It does not satisfy ``LoaderLike`` on its
+        own (no ``.load(source_path)``, no
+        ``.raw_workbook``/``.success``/``.error``/``.metadata``
+        attributes), so it is wrapped here by a minimal structural
+        adapter — not a new service class, just the "small adapter
+        calls" this file was always meant to own.
 
     data.repository.WorkbookRepository(loader, validator, parser_service)
         The real repository contract. ``validator`` must satisfy
@@ -67,14 +68,18 @@ Collaborators actually used (matching the real, shipped contracts)
     services.workbook_service.WorkbookService(repository)
         The real façade ``DashboardService`` depends on.
 
-    services.section_service.SectionService
-    services.filter_service.FilterService
-    services.kpi_service.KPIService
-    services.summary_service.SummaryService
-    services.chart_service.ChartService
-        Constructed exactly as ``pages/overview.py`` already imports
-        them (``from services.<name> import <Name>``), since that is
-        the only existing reference to their concrete location.
+    services.section_service.SectionService(workbook_service)
+    services.filter_service.FilterService()
+    services.kpi_service.KPIService(section_service)
+    services.summary_service.SummaryService(workbook_service, section_service)
+    services.chart_service.ChartService(section_service)
+        Constructed with exactly the dependencies each constructor
+        requires, wiring the dependency graph in dependency order:
+        ``workbook_service`` first, then ``section_service`` (which
+        depends on it), then ``filter_service`` (standalone), then
+        ``kpi_service``/``summary_service``/``chart_service`` (which
+        depend on ``section_service`` and, for ``summary_service``,
+        also ``workbook_service``).
 
     services.dashboard_service.DashboardService
         The real, 6-collaborator-injected service. Its entry point is
@@ -185,13 +190,14 @@ def _github_loader_adapter() -> object:
     Build a ``LoaderLike``-satisfying object around the real
     ``load_workbook_from_github`` function.
 
-    ``data.github_loader`` exposes a bare function returning an
-    ``openpyxl.Workbook``, not an object with ``.raw_workbook``,
+    ``data.github_loader`` exposes a bare, zero-argument function
+    returning an in-memory ``BytesIO`` stream of the downloaded
+    workbook's raw bytes, not an object with ``.raw_workbook``,
     ``.source_path``, ``.metadata``, ``.success``, ``.error`` as
     ``WorkbookRepository`` requires. This wraps it structurally,
-    without introducing any new business-logic class — the download,
-    caching, and TTL behavior all remain entirely inside
-    ``data.github_loader``, unmodified.
+    without introducing any new business-logic class — the download
+    behavior remains entirely inside ``data.github_loader``,
+    unmodified.
 
     Returns:
         An object exposing ``.load(source_path) -> SimpleNamespace``
@@ -247,41 +253,57 @@ def _passthrough_validator_adapter() -> object:
 
 @st.cache_resource(show_spinner=False)
 def _build_dashboard_service() -> DashboardService:
-   repository = WorkbookRepository(
-    loader=_github_loader_adapter(),
-    validator=_passthrough_validator_adapter(),
-    parser_service=ParserService(),
-)
+    """
+    Construct the singleton ``DashboardService`` for this app session,
+    wiring in the real ``WorkbookService`` (backed by
+    ``WorkbookRepository``) plus ``SectionService``, ``FilterService``,
+    ``KPIService``, ``SummaryService``, and ``ChartService``, each
+    receiving exactly the dependencies its own constructor requires.
 
-workbook_service = WorkbookService(repository=repository)
+    Cached with ``st.cache_resource`` so the same instance (and its
+    injected collaborators) is reused across reruns rather than
+    reconstructed on every interaction; this is an application wiring
+    concern, not a data-loading or business-logic concern.
 
-section_service = SectionService(
-    workbook_service=workbook_service
-)
+    Returns:
+        A fully constructed ``DashboardService`` instance.
+    """
+    repository = WorkbookRepository(
+        loader=_github_loader_adapter(),
+        validator=_passthrough_validator_adapter(),
+        parser_service=ParserService(),
+    )
 
-filter_service = FilterService()
+    workbook_service = WorkbookService(repository=repository)
 
-kpi_service = KPIService(
-    section_service=section_service
-)
+    section_service = SectionService(
+        workbook_service=workbook_service,
+    )
 
-summary_service = SummaryService(
-    workbook_service=workbook_service,
-    section_service=section_service,
-)
+    filter_service = FilterService()
 
-chart_service = ChartService(
-    section_service=section_service,
-)
+    kpi_service = KPIService(
+        section_service=section_service,
+    )
 
-return DashboardService(
-    workbook_service=workbook_service,
-    section_service=section_service,
-    filter_service=filter_service,
-    kpi_service=kpi_service,
-    summary_service=summary_service,
-    chart_service=chart_service,
-)
+    summary_service = SummaryService(
+        workbook_service=workbook_service,
+        section_service=section_service,
+    )
+
+    chart_service = ChartService(
+        section_service=section_service,
+    )
+
+    return DashboardService(
+        workbook_service=workbook_service,
+        section_service=section_service,
+        filter_service=filter_service,
+        kpi_service=kpi_service,
+        summary_service=summary_service,
+        chart_service=chart_service,
+    )
+
 
 def _request_refresh() -> None:
     """
@@ -366,8 +388,7 @@ def _handle_startup(
 
     Args:
         dashboard_service: The initialized dashboard service.
-        on_retry: Callback invoked by the reusable error/empty-state
-            screens when the user requests a retry.
+        on_retry: Callback invoked when the user requests a retry.
 
     Returns:
         ``True`` if the workbook loaded successfully and navigation
@@ -411,7 +432,8 @@ def _handle_startup(
         return False
 
     return True
-    
+
+
 def main() -> None:
     """
     Application entry point.
