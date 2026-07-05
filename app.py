@@ -266,17 +266,34 @@ def _build_dashboard_service() -> DashboardService:
         validator=_passthrough_validator_adapter(),
         parser_service=ParserService(),
     )
-   workbook_service = WorkbookService(repository=repository)
+  workbook_service = WorkbookService(repository=repository)
+
+section_service = SectionService(workbook_service)
+
+filter_service = FilterService()
+
+kpi_service = KPIService(section_service)
+
+summary_service = SummaryService(
+    workbook_service,
+    section_service,
+    filter_service,
+    kpi_service,
+)
+
+chart_service = ChartService(
+    section_service,
+    filter_service,
+)
 
 return DashboardService(
     workbook_service=workbook_service,
-    section_service=SectionService(workbook_service),
-    filter_service=FilterService(),
-    kpi_service=KPIService(),
-    summary_service=SummaryService(),
-    chart_service=ChartService(),
+    section_service=section_service,
+    filter_service=filter_service,
+    kpi_service=kpi_service,
+    summary_service=summary_service,
+    chart_service=chart_service,
 )
-
 
 def _request_refresh() -> None:
     """
