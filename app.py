@@ -391,20 +391,19 @@ def _handle_startup(
         error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
         render_error_screen(error, on_retry=on_retry)
         return False
-if not result.expandable_sections:
-    st.warning(
-        "No engineering sections were found in the workbook. "
-        "Please verify the workbook contains valid data."
-    )
+    if not result.expandable_sections:
+        st.warning(
+            "No engineering sections were found in the workbook. "
+            "Please verify the workbook contains valid data."
+        )
 
-    if st.button("Retry Loading"):
-        on_retry()
+        if st.button("Retry Loading"):
+            on_retry()
 
-    return False
+        return False
 
     return True
-
-
+    
 def main() -> None:
     """
     Application entry point.
