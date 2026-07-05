@@ -100,7 +100,7 @@ from typing import Callable, List, Optional
 import streamlit as st
 
 from components.layout import configure_page, inject_global_styles, page_container
-from components.empty_state import render_empty_workbook_screen
+
 from components.error_screen import render_error_screen
 from components.loading_screen import render_loading_screen
 from components.theme import THEME, get_global_css
@@ -391,10 +391,16 @@ def _handle_startup(
         error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
         render_error_screen(error, on_retry=on_retry)
         return False
+if not result.expandable_sections:
+    st.warning(
+        "No engineering sections were found in the workbook. "
+        "Please verify the workbook contains valid data."
+    )
 
-    if not result.expandable_sections:
-        render_empty_workbook_screen(on_retry=on_retry)
-        return False
+    if st.button("Retry Loading"):
+        on_retry()
+
+    return False
 
     return True
 
