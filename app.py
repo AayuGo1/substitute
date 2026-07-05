@@ -40,8 +40,6 @@ Collaborators actually used (matching the real, shipped contracts)
         ``components.layout`` in the shipped codebase; these are the
         only layout helpers that actually exist.)
 
-    components.loading_screen.render_loading_screen
-    components.error_screen.render_error_screen
     components.empty_state.render_empty_workbook_screen
         Reusable loading/error/empty-state screens (unchanged).
 
@@ -100,9 +98,6 @@ from typing import Callable, List, Optional
 import streamlit as st
 
 from components.layout import configure_page, inject_global_styles, page_container
-
-
-from components.loading_screen import render_loading_screen
 from components.theme import THEME, get_global_css
 
 from config.github import get_github_config
