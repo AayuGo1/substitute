@@ -165,16 +165,13 @@ class _NavPage:
     icon: str
     module_path: str
 
-
-_NAV_PAGES: List[_NavPage] = [
-    _NavPage("overview", "Overview", "🏠", "pages/overview.py"),
-    _NavPage("departments", "Departments", "🏢", "pages/departments.py"),
-    _NavPage("air_compressor", "Air Compressor", "🌀", "pages/air_compressor.py"),
-    _NavPage("freon_monitoring", "Freon Monitoring", "❄️", "pages/freon_monitoring.py"),
-    _NavPage("water", "Water", "💧", "pages/water.py"),
-    _NavPage("energy", "Energy", "⚡", "pages/energy.py"),
-    _NavPage("utilities", "Utilities", "🛠️", "pages/utilities.py"),
-    _NavPage("settings", "Settings", "⚙️", "pages/settings.py"),
+_NAV_PAGES = [
+    _NavPage(
+        "overview",
+        "Overview",
+        "🏠",
+        "pages/overview.py",
+    ),
 ]
 
 
