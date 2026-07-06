@@ -102,7 +102,10 @@ Collaborators actually used (matching the real, shipped contracts)
 If any concrete collaborator signature differs from the above, only
 the small adapter calls in this file need to change.
 """
+import logging
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -199,22 +202,22 @@ def _github_loader_adapter() -> object:
     """
 
     def _load(source_path: str) -> SimpleNamespace:
-        print("1. Calling GitHub loader")
+      logger.info("1. Calling GitHub loader")
 
         workbook_stream = load_workbook_from_github()
 
-        print("2. GitHub loader returned")
+       logger.info("2. GitHub loader returned")
 
         workbook_stream.seek(0)
 
-        print("3. Before openpyxl.load_workbook")
+        logger.info("3. Before openpyxl.load_workbook")
 
         raw_workbook = load_workbook(
             filename=workbook_stream,
             data_only=True,
         )
 
-        print("4. openpyxl finished")
+        logger.info("4. openpyxl finished")  
 
         return SimpleNamespace(
             raw_workbook=raw_workbook,
