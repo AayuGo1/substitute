@@ -224,7 +224,7 @@ def _github_loader_adapter() -> object:
         satisfying ``data.repository.SupportsRawWorkbook``.
     """
 
-   def _load(source_path: str) -> SimpleNamespace:
+ def _load(source_path: str) -> SimpleNamespace:
     print("1. Calling GitHub loader")
 
     workbook_stream = load_workbook_from_github()
@@ -241,6 +241,16 @@ def _github_loader_adapter() -> object:
     )
 
     print("4. openpyxl finished")
+     
+    return SimpleNamespace(
+            raw_workbook=raw_workbook,
+            source_path=source_path,
+            metadata=None,
+            success=True,
+            error=None,
+        )
+
+    return SimpleNamespace(load=_load)
 
 def _passthrough_validator_adapter() -> object:
     """
