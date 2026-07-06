@@ -7,9 +7,12 @@ Dashboard.
 Pure orchestration layer: configures the page, applies the global
 theme, wires dependency injection for the Loader -> Validator ->
 Parser -> WorkbookRepository -> WorkbookService -> DashboardService
-chain, and registers Streamlit's multipage navigation. No business
-logic, KPI calculation, Excel parsing, validation logic, chart
-generation, or CSS/HTML lives here.
+chain, loads the workbook once per session via
+``DashboardService.get_overview_page_data(...)``, stores the result in
+the session-state key ``pages/overview.py`` expects, and registers
+Streamlit's multipage navigation. No business logic, KPI calculation,
+Excel parsing, validation logic, chart generation, or CSS/HTML lives
+here.
 
 Structural adapter note
 ------------------------
@@ -34,7 +37,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from types import SimpleNamespace
-from typing import List
+from typing import List, Optional
 
 import streamlit as st
 from openpyxl import load_workbook as load_openpyxl_workbook
@@ -46,7 +49,7 @@ from data.github_loader import load_workbook_from_github
 from data.repository import WorkbookRepository
 
 from services.chart_service import ChartService
-from services.dashboard_service import DashboardService
+from services.dashboard_service import DashboardService, OverviewPageData
 from services.filter_service import FilterService
 from services.kpi_service import KPIService
 from services.parser_service import ParserService
@@ -65,6 +68,12 @@ _DASHBOARD_ICON = "\U0001F3ED"
 # used as WorkbookRepository/WorkbookService's source-path bookkeeping
 # key, never as a real file path.
 _WORKBOOK_SOURCE_PATH = "github-workbook"
+
+# Session-state key pages/overview.py reads its fully resolved page
+# data from. Must match _SESSION_KEY_PAGE_DATA in pages/overview.py
+# exactly.
+_SESSION_KEY_PAGE_DATA = "em_app__overview_page_data"
+_SESSION_KEY_LOAD_ERROR = "em_app__load_error"
 
 _NAV_PAGES = [
     st.Page("pages/overview.py", title="Overview", icon="🏠", url_path="overview"),
@@ -158,13 +167,42 @@ def _build_dashboard_service() -> DashboardService:
     )
 
 
+def _load_overview_page_data(
+    dashboard_service: DashboardService,
+) -> Optional[OverviewPageData]:
+    """Load the Overview page's data via ``DashboardService``, once per
+    session, storing the outcome in the session-state keys
+    ``pages/overview.py`` and this module rely on.
+
+    Args:
+        dashboard_service: The initialized dashboard service.
+
+    Returns:
+        The loaded ``OverviewPageData`` on success, or ``None`` if
+        loading raised an exception (in which case the exception is
+        recorded in session state instead).
+    """
+    try:
+        page_data = dashboard_service.get_overview_page_data(
+            source_path=_WORKBOOK_SOURCE_PATH
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+        st.session_state[_SESSION_KEY_LOAD_ERROR] = exc
+        st.session_state[_SESSION_KEY_PAGE_DATA] = None
+        return None
+
+    st.session_state[_SESSION_KEY_LOAD_ERROR] = None
+    st.session_state[_SESSION_KEY_PAGE_DATA] = page_data
+    return page_data
+
+
 def _register_navigation(pages: List[st.Page]) -> None:
     """Register the application's multipage navigation."""
     st.navigation(pages).run()
 
 
 def main() -> None:
-    """Application entry point: configure, wire, and launch."""
+    """Application entry point: configure, wire, load, and launch."""
     configure_page(_DASHBOARD_TITLE, _DASHBOARD_ICON)
     inject_global_styles(get_global_css())
 
@@ -172,6 +210,22 @@ def main() -> None:
         st.session_state["dashboard_service"] = _build_dashboard_service()
     if "workbook_source_path" not in st.session_state:
         st.session_state["workbook_source_path"] = _WORKBOOK_SOURCE_PATH
+
+    dashboard_service: DashboardService = st.session_state["dashboard_service"]
+
+    if _SESSION_KEY_PAGE_DATA not in st.session_state:
+        with st.spinner("Loading workbook..."):
+            st.info("🔄 Connecting to workbook source...")
+            _load_overview_page_data(dashboard_service)
+
+    load_error = st.session_state.get(_SESSION_KEY_LOAD_ERROR)
+    if load_error is not None:
+        st.error(f"Failed to load workbook:\n\n{load_error}")
+        if st.button("Retry"):
+            st.session_state[_SESSION_KEY_PAGE_DATA] = None
+            st.session_state[_SESSION_KEY_LOAD_ERROR] = None
+            st.rerun()
+        return
 
     with page_container():
         _register_navigation(_NAV_PAGES)
