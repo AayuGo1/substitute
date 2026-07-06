@@ -196,53 +196,27 @@ def _github_loader_adapter() -> object:
     """
     Build a ``LoaderLike``-satisfying object around the real
     ``load_workbook_from_github`` function.
-
-    ``data.github_loader.load_workbook_from_github()`` returns an
-    in-memory ``BytesIO`` stream of the workbook's raw downloaded
-    bytes — it performs no Excel parsing of its own.
-    ``WorkbookRepository`` and ``ParserService`` require an
-    already-open ``openpyxl`` ``Workbook`` object (exposing
-    ``.sheetnames`` and worksheet access), not a raw byte stream. This
-    adapter is therefore responsible for:
-
-        1. Calling ``load_workbook_from_github()`` to obtain the
-           downloaded ``BytesIO`` stream.
-        2. Converting that stream into a parsed ``openpyxl`` workbook
-           via ``openpyxl.load_workbook(filename=stream,
-           data_only=True)``.
-        3. Wrapping the parsed workbook in the small structural object
-           ``WorkbookRepository`` expects (``.raw_workbook``,
-           ``.source_path``, ``.metadata``, ``.success``, ``.error``).
-
-    No new service class is introduced — the download behavior remains
-    entirely inside ``data.github_loader``, unmodified; this function
-    only performs the byte-stream-to-workbook conversion and the
-    structural wrapping ``WorkbookRepository`` already requires.
-
-    Returns:
-        An object exposing ``.load(source_path) -> SimpleNamespace``
-        satisfying ``data.repository.SupportsRawWorkbook``.
     """
 
- def _load(source_path: str) -> SimpleNamespace:
-    print("1. Calling GitHub loader")
+    def _load(source_path: str) -> SimpleNamespace:
+        print("1. Calling GitHub loader")
 
-    workbook_stream = load_workbook_from_github()
+        workbook_stream = load_workbook_from_github()
 
-    print("2. GitHub loader returned")
+        print("2. GitHub loader returned")
 
-    workbook_stream.seek(0)
+        workbook_stream.seek(0)
 
-    print("3. Before openpyxl.load_workbook")
+        print("3. Before openpyxl.load_workbook")
 
-    raw_workbook = load_workbook(
-        filename=workbook_stream,
-        data_only=True,
-    )
+        raw_workbook = load_workbook(
+            filename=workbook_stream,
+            data_only=True,
+        )
 
-    print("4. openpyxl finished")
-     
-    return SimpleNamespace(
+        print("4. openpyxl finished")
+
+        return SimpleNamespace(
             raw_workbook=raw_workbook,
             source_path=source_path,
             metadata=None,
@@ -251,7 +225,6 @@ def _github_loader_adapter() -> object:
         )
 
     return SimpleNamespace(load=_load)
-
 def _passthrough_validator_adapter() -> object:
     """
     Build a ``ValidatorLike``-satisfying object that reports every
