@@ -202,9 +202,9 @@ def _github_loader_adapter() -> object:
     """
 
     def _load(source_path: str) -> SimpleNamespace:
-      logger.info("1. Calling GitHub loader")
+       logger.info("1. Calling GitHub loader")
 
-        workbook_stream = load_workbook_from_github()
+       workbook_stream = load_workbook_from_github()
 
        logger.info("2. GitHub loader returned")
 
