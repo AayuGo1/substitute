@@ -1,72 +1,30 @@
-"""Single data access layer for the engineering monitoring dashboard.
+"""
+data/repository.py — INSTRUMENTED FOR RUNTIME HANG DIAGNOSIS
+(TEMPORARY LOGGING)
 
-This module exposes :class:`WorkbookRepository`, the only component in
-the application that is allowed to coordinate loading, validating, and
-parsing a workbook into the strongly typed
-:class:`~models.workbook.Workbook` object graph consumed by the rest of
-the dashboard.
-
-Responsibilities are strictly limited to *data access orchestration*:
-
-* Ask a :class:`~services.loader_service.LoaderService` (or equivalent)
-  to load a workbook from its source (file path, cache, GitHub, etc.).
-* Ask a validator to check that the loaded workbook is structurally
-  sound, reusing whatever structure the validator already discovered
-  instead of re-discovering it.
-* Hand the loaded workbook — and, when available, the validator's
-  already-discovered structure — to a
-  :class:`~services.parser_service.ParserService` to build the final
-  :class:`~models.workbook.Workbook` model.
-
-This module deliberately contains:
-
-* No KPI calculations.
-* No chart generation.
-* No Streamlit or any other UI code.
-
-Loader, Validator, and Parser are all supplied via constructor
-dependency injection, so this repository has no hardcoded knowledge of
-*how* a workbook is loaded, validated, or parsed — only of the order in
-which those three steps happen and how their outputs are threaded
-together.
+All original business logic, models, and return values are unchanged.
+Only ENTER/EXIT/BEFORE/AFTER debug logging has been added. Remove all
+lines marked "# DEBUG" once the hang is diagnosed.
 """
 
 from __future__ import annotations
 
+import sys
+import traceback
 from typing import Optional, Protocol, runtime_checkable
 
 from models.workbook import Workbook, WorkbookMetadata
 
 
-# ----------------------------------------------------------------------
-# Collaborator protocols
-# ----------------------------------------------------------------------
-# The repository depends only on these narrow, structural interfaces
-# rather than on concrete Loader/Validator/Parser classes. This keeps
-# the repository decoupled from their implementations (per the
-# Dependency Inversion Principle) and makes it straightforward to inject
-# fakes/mocks in tests. Concrete collaborators only need to satisfy the
-# shape described here; they need not literally subclass these
-# protocols.
+# ---------------------------------------------------------------------
+# DEBUG: logging helper (temporary)
+# ---------------------------------------------------------------------
+def _dbg(msg: str) -> None:  # DEBUG
+    print(f"[DEBUG] {msg}", file=sys.stderr, flush=True)  # DEBUG
+
 
 @runtime_checkable
 class SupportsRawWorkbook(Protocol):
-    """Structural interface for whatever a Loader hands back.
-
-    Concrete loaders are free to return a richer dataclass (for example
-    one also carrying cache-hit information or a content SHA); the
-    repository only relies on the attributes declared here.
-
-    Attributes:
-        raw_workbook: The already-open ``openpyxl`` workbook object.
-        source_path: The path or identifier the workbook was loaded
-            from, used for diagnostics and as a fallback workbook name.
-        metadata: Descriptive metadata about the loaded workbook file.
-        success: Whether loading completed without a fatal error.
-        error: A human-readable description of the load failure, if
-            ``success`` is ``False``.
-    """
-
     raw_workbook: object
     source_path: str
     metadata: Optional[WorkbookMetadata]
@@ -76,18 +34,6 @@ class SupportsRawWorkbook(Protocol):
 
 @runtime_checkable
 class SupportsValidationResult(Protocol):
-    """Structural interface for whatever a Validator hands back.
-
-    Attributes:
-        is_valid: Whether the workbook passed validation.
-        structure: The workbook structure the validator discovered while
-            validating, if any. When present, the repository passes this
-            straight into the parser so structure is never discovered
-            twice.
-        errors: Fatal validation error messages.
-        warnings: Non-fatal validation warning messages.
-    """
-
     is_valid: bool
     structure: Optional[object]
     errors: list
@@ -96,75 +42,27 @@ class SupportsValidationResult(Protocol):
 
 @runtime_checkable
 class LoaderLike(Protocol):
-    """Structural interface required of an injected Loader."""
-
-    def load(self, source_path: str) -> SupportsRawWorkbook:
-        """Loads a workbook from its source.
-
-        Args:
-            source_path: Path or identifier of the workbook to load.
-
-        Returns:
-            An object satisfying :class:`SupportsRawWorkbook`.
-        """
-        ...
+    def load(self, source_path: str) -> SupportsRawWorkbook: ...
 
 
 @runtime_checkable
 class ValidatorLike(Protocol):
-    """Structural interface required of an injected Validator."""
-
-    def validate(self, raw_workbook: object) -> SupportsValidationResult:
-        """Validates an already-loaded workbook.
-
-        Args:
-            raw_workbook: The already-open ``openpyxl`` workbook to
-                validate.
-
-        Returns:
-            An object satisfying :class:`SupportsValidationResult`.
-        """
-        ...
+    def validate(self, raw_workbook: object) -> SupportsValidationResult: ...
 
 
 @runtime_checkable
 class ParserServiceLike(Protocol):
-    """Structural interface required of an injected ParserService."""
-
     def parse(
         self,
         raw_workbook: object,
         workbook_name: Optional[str] = None,
         structure: Optional[object] = None,
         metadata: Optional[WorkbookMetadata] = None,
-    ) -> Workbook:
-        """Parses an already-loaded workbook into a typed Workbook.
+    ) -> Workbook: ...
 
-        Args:
-            raw_workbook: The already-open ``openpyxl`` workbook.
-            workbook_name: A human-friendly name for the workbook.
-            structure: A previously discovered workbook structure to
-                reuse, if available.
-            metadata: Descriptive metadata about the workbook file.
-
-        Returns:
-            A populated :class:`~models.workbook.Workbook`.
-        """
-        ...
-
-
-# ----------------------------------------------------------------------
-# Exceptions
-# ----------------------------------------------------------------------
 
 class WorkbookRepositoryError(Exception):
-    """Raised when the repository cannot produce a Workbook model.
-
-    This wraps and normalizes failures from any of the three
-    collaborators (Loader, Validator, ParserService) into a single,
-    meaningful exception type so callers only need to handle one error
-    class regardless of which stage failed.
-    """
+    """Raised when the repository cannot produce a Workbook model."""
 
 
 class WorkbookLoadError(WorkbookRepositoryError):
@@ -172,34 +70,11 @@ class WorkbookLoadError(WorkbookRepositoryError):
 
 
 class WorkbookValidationError(WorkbookRepositoryError):
-    """Raised when a loaded workbook fails validation.
+    """Raised when a loaded workbook fails validation."""
 
-    Only raised when the caller has not opted in to receiving a parsed
-    (but validation-flagged) workbook via ``strict=False``.
-    """
-
-
-# ----------------------------------------------------------------------
-# Repository
-# ----------------------------------------------------------------------
 
 class WorkbookRepository:
-    """Coordinates Loader, Validator, and ParserService for the app.
-
-    This is the single point through which the rest of the application
-    (services, pages) obtains a fully populated
-    :class:`~models.workbook.Workbook`. It performs no data
-    transformation of its own beyond threading the outputs of one
-    collaborator into the inputs of the next.
-
-    Attributes:
-        loader: Loads a raw workbook from its source (file path, cache,
-            remote store, etc.).
-        validator: Validates a raw workbook and discovers its structure.
-        parser_service: Builds the final :class:`Workbook` model from a
-            raw workbook and, when available, an already-discovered
-            structure.
-    """
+    """Coordinates Loader, Validator, and ParserService for the app."""
 
     def __init__(
         self,
@@ -207,13 +82,6 @@ class WorkbookRepository:
         validator: ValidatorLike,
         parser_service: ParserServiceLike,
     ) -> None:
-        """Initializes the repository with its three collaborators.
-
-        Args:
-            loader: An object satisfying :class:`LoaderLike`.
-            validator: An object satisfying :class:`ValidatorLike`.
-            parser_service: An object satisfying :class:`ParserServiceLike`.
-        """
         self.loader = loader
         self.validator = validator
         self.parser_service = parser_service
@@ -228,111 +96,98 @@ class WorkbookRepository:
         workbook_name: Optional[str] = None,
         strict: bool = False,
     ) -> Workbook:
-        """Loads, validates, and parses a workbook into a typed model.
+        _dbg("ENTER data.repository.WorkbookRepository.get_workbook")  # DEBUG
+        try:
+            _dbg("BEFORE self._load()")  # DEBUG
+            load_result = self._load(source_path)
+            _dbg("AFTER self._load()")  # DEBUG
 
-        Args:
-            source_path: Path or identifier of the workbook to load.
-            workbook_name: Optional human-friendly name for the
-                workbook. Defaults to ``source_path`` when omitted.
-            strict: When ``True``, a workbook that fails validation
-                raises :class:`WorkbookValidationError` instead of being
-                parsed. When ``False`` (the default), validation
-                warnings and errors are still recorded on the returned
-                :class:`Workbook`, but parsing proceeds regardless, so
-                the caller can decide how to react to a partially valid
-                workbook.
+            _dbg("BEFORE self._validate()")  # DEBUG
+            validation_result = self._validate(load_result.raw_workbook)
+            _dbg("AFTER self._validate()")  # DEBUG
+            _dbg(f"Validator result: is_valid={validation_result.is_valid}, "
+                 f"errors={getattr(validation_result, 'errors', None)}, "
+                 f"warnings={getattr(validation_result, 'warnings', None)}")  # DEBUG
 
-        Returns:
-            A fully populated :class:`~models.workbook.Workbook`.
+            if strict and not validation_result.is_valid:
+                _dbg("Strict mode and workbook invalid -> raising WorkbookValidationError")  # DEBUG
+                raise WorkbookValidationError(
+                    self._format_validation_errors(source_path, validation_result)
+                )
 
-        Raises:
-            WorkbookLoadError: If the Loader could not produce a raw
-                workbook from ``source_path``.
-            WorkbookValidationError: If ``strict`` is ``True`` and the
-                workbook fails validation.
-            WorkbookRepositoryError: If parsing fails for any other
-                reason.
-        """
-        load_result = self._load(source_path)
-        validation_result = self._validate(load_result.raw_workbook)
-
-        if strict and not validation_result.is_valid:
-            raise WorkbookValidationError(
-                self._format_validation_errors(source_path, validation_result)
+            resolved_name = workbook_name or getattr(
+                load_result, "source_path", source_path
             )
+            resolved_metadata = getattr(load_result, "metadata", None)
+            reusable_structure = getattr(validation_result, "structure", None)
 
-        resolved_name = workbook_name or getattr(
-            load_result, "source_path", source_path
-        )
-        resolved_metadata = getattr(load_result, "metadata", None)
-        reusable_structure = getattr(validation_result, "structure", None)
+            _dbg("BEFORE self._parse()")  # DEBUG
+            workbook = self._parse(
+                raw_workbook=load_result.raw_workbook,
+                workbook_name=resolved_name,
+                structure=reusable_structure,
+                metadata=resolved_metadata,
+            )
+            _dbg("AFTER self._parse()")  # DEBUG
+            _dbg(f"Parser result: sections_count={len(workbook.sections)}, "
+                 f"validation_status={workbook.validation_status}, "
+                 f"warnings={workbook.warnings}, errors={workbook.errors}")  # DEBUG
 
-        workbook = self._parse(
-            raw_workbook=load_result.raw_workbook,
-            workbook_name=resolved_name,
-            structure=reusable_structure,
-            metadata=resolved_metadata,
-        )
-
-        self._merge_validation_feedback(workbook, validation_result)
-        return workbook
+            self._merge_validation_feedback(workbook, validation_result)
+            _dbg("EXIT data.repository.WorkbookRepository.get_workbook (success)")  # DEBUG
+            return workbook
+        except Exception:
+            _dbg("EXCEPTION in WorkbookRepository.get_workbook")  # DEBUG
+            _dbg(traceback.format_exc())  # DEBUG
+            raise
 
     # ------------------------------------------------------------------
     # Stage helpers
     # ------------------------------------------------------------------
 
     def _load(self, source_path: str) -> SupportsRawWorkbook:
-        """Loads a workbook from its source via the injected Loader.
-
-        Args:
-            source_path: Path or identifier of the workbook to load.
-
-        Returns:
-            The Loader's result, satisfying :class:`SupportsRawWorkbook`.
-
-        Raises:
-            WorkbookLoadError: If loading raises an unexpected exception
-                or reports failure via ``success``/``error``.
-        """
+        _dbg("ENTER WorkbookRepository._load")  # DEBUG
         try:
+            _dbg("BEFORE loader.load()")  # DEBUG
             load_result = self.loader.load(source_path)
+            _dbg("AFTER loader.load()")  # DEBUG
         except Exception as exc:  # noqa: BLE001 - normalized into one error type
+            _dbg("EXCEPTION raised by loader.load()")  # DEBUG
+            _dbg(traceback.format_exc())  # DEBUG
             raise WorkbookLoadError(
                 f"Failed to load workbook from '{source_path}': {exc}"
             ) from exc
 
         success = getattr(load_result, "success", True)
+        _dbg(f"Loader success flag: {success}")  # DEBUG
         if not success:
             error_message = getattr(load_result, "error", "unknown error")
+            _dbg(f"Loader reported failure: {error_message}")  # DEBUG
             raise WorkbookLoadError(
                 f"Failed to load workbook from '{source_path}': {error_message}"
             )
 
         raw_workbook = getattr(load_result, "raw_workbook", None)
         if raw_workbook is None:
+            _dbg("Loader returned no raw_workbook")  # DEBUG
             raise WorkbookLoadError(
                 f"Loader returned no workbook for '{source_path}'."
             )
 
+        _dbg("EXIT WorkbookRepository._load (success)")  # DEBUG
         return load_result
 
     def _validate(self, raw_workbook: object) -> SupportsValidationResult:
-        """Validates a raw workbook via the injected Validator.
-
-        Args:
-            raw_workbook: The already-open workbook to validate.
-
-        Returns:
-            The Validator's result, satisfying
-            :class:`SupportsValidationResult`.
-
-        Raises:
-            WorkbookRepositoryError: If validation raises an unexpected
-                exception.
-        """
+        _dbg("ENTER WorkbookRepository._validate")  # DEBUG
         try:
-            return self.validator.validate(raw_workbook)
+            _dbg("BEFORE validator.validate()")  # DEBUG
+            result = self.validator.validate(raw_workbook)
+            _dbg("AFTER validator.validate()")  # DEBUG
+            _dbg("EXIT WorkbookRepository._validate (success)")  # DEBUG
+            return result
         except Exception as exc:  # noqa: BLE001 - normalized into one error type
+            _dbg("EXCEPTION raised by validator.validate()")  # DEBUG
+            _dbg(traceback.format_exc())  # DEBUG
             raise WorkbookRepositoryError(
                 f"Failed to validate workbook: {exc}"
             ) from exc
@@ -344,33 +199,21 @@ class WorkbookRepository:
         structure: Optional[object],
         metadata: Optional[WorkbookMetadata],
     ) -> Workbook:
-        """Parses a raw workbook via the injected ParserService.
-
-        Reuses ``structure`` (typically produced by the Validator) so
-        the workbook's layout is never discovered more than once.
-
-        Args:
-            raw_workbook: The already-open workbook to parse.
-            workbook_name: The resolved human-friendly workbook name.
-            structure: A previously discovered workbook structure to
-                reuse, if the validator produced one.
-            metadata: Descriptive metadata about the workbook file.
-
-        Returns:
-            A populated :class:`~models.workbook.Workbook`.
-
-        Raises:
-            WorkbookRepositoryError: If parsing raises an unexpected
-                exception.
-        """
+        _dbg("ENTER WorkbookRepository._parse")  # DEBUG
         try:
-            return self.parser_service.parse(
+            _dbg("BEFORE parser_service.parse()")  # DEBUG
+            result = self.parser_service.parse(
                 raw_workbook,
                 workbook_name=workbook_name,
                 structure=structure,
                 metadata=metadata,
             )
+            _dbg("AFTER parser_service.parse()")  # DEBUG
+            _dbg("EXIT WorkbookRepository._parse (success)")  # DEBUG
+            return result
         except Exception as exc:  # noqa: BLE001 - normalized into one error type
+            _dbg("EXCEPTION raised by parser_service.parse()")  # DEBUG
+            _dbg(traceback.format_exc())  # DEBUG
             raise WorkbookRepositoryError(
                 f"Failed to parse workbook '{workbook_name}': {exc}"
             ) from exc
@@ -383,18 +226,7 @@ class WorkbookRepository:
     def _merge_validation_feedback(
         workbook: Workbook, validation_result: SupportsValidationResult
     ) -> None:
-        """Folds validator warnings/errors into the parsed Workbook.
-
-        Parsing may surface its own warnings and errors independently of
-        validation; this appends the validator's findings rather than
-        overwriting them, so no diagnostic information from either stage
-        is lost.
-
-        Args:
-            workbook: The parsed workbook to update in place.
-            validation_result: The validator's result for the same
-                workbook.
-        """
+        _dbg("ENTER WorkbookRepository._merge_validation_feedback")  # DEBUG
         validation_errors = list(getattr(validation_result, "errors", []) or [])
         validation_warnings = list(getattr(validation_result, "warnings", []) or [])
 
@@ -405,23 +237,17 @@ class WorkbookRepository:
         for warning in validation_warnings:
             if warning not in workbook.warnings:
                 workbook.warnings.append(warning)
+        _dbg("EXIT WorkbookRepository._merge_validation_feedback")  # DEBUG
 
     @staticmethod
     def _format_validation_errors(
         source_path: str, validation_result: SupportsValidationResult
     ) -> str:
-        """Builds a human-readable message describing validation failures.
-
-        Args:
-            source_path: The workbook source path, for context.
-            validation_result: The failed validation result.
-
-        Returns:
-            A single formatted message summarizing all validation
-            errors.
-        """
+        _dbg("ENTER WorkbookRepository._format_validation_errors")  # DEBUG
         errors = list(getattr(validation_result, "errors", []) or [])
         if not errors:
+            _dbg("EXIT WorkbookRepository._format_validation_errors (no errors)")  # DEBUG
             return f"Workbook '{source_path}' failed validation."
         joined = "; ".join(str(error) for error in errors)
+        _dbg("EXIT WorkbookRepository._format_validation_errors")  # DEBUG
         return f"Workbook '{source_path}' failed validation: {joined}"
