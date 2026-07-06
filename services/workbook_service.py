@@ -1,82 +1,43 @@
-"""Primary business logic entry point for the engineering monitoring dashboard.
+"""
+services/workbook_service.py — INSTRUMENTED FOR RUNTIME HANG DIAGNOSIS
+(TEMPORARY LOGGING)
 
-This module exposes :class:`WorkbookService`, a thin façade over
-:class:`~data.repository.WorkbookRepository` that gives the rest of the
-application (dashboard pages, in particular) a single, focused place to
-obtain a parsed workbook and answer simple questions about it.
-
-This service deliberately contains:
-
-* No KPI calculations.
-* No chart generation.
-* No Streamlit or any other UI code.
-* No duplication of the repository's load/validate/parse orchestration
-  logic — it calls the repository once per workbook and derives every
-  helper from the resulting :class:`~models.workbook.Workbook`.
+All original business logic and return values are unchanged. Only
+ENTER/EXIT/BEFORE/AFTER debug logging has been added. Remove all lines
+marked "# DEBUG" once the hang is diagnosed.
 """
 
 from __future__ import annotations
 
+import sys
+import traceback
 from typing import List, Optional, Protocol, runtime_checkable
 
 from models.section import DateRange, Section
 from models.workbook import Workbook, WorkbookMetadata, ValidationStatus
 
 
+# ---------------------------------------------------------------------
+# DEBUG: logging helper (temporary)
+# ---------------------------------------------------------------------
+def _dbg(msg: str) -> None:  # DEBUG
+    print(f"[DEBUG] {msg}", file=sys.stderr, flush=True)  # DEBUG
+
+
 @runtime_checkable
 class WorkbookRepositoryLike(Protocol):
-    """Structural interface required of an injected repository.
-
-    :class:`WorkbookService` depends on this narrow interface rather than
-    the concrete ``WorkbookRepository`` class, keeping it decoupled from
-    the repository's implementation (Dependency Inversion Principle) and
-    straightforward to test with fakes.
-    """
-
     def get_workbook(
         self,
         source_path: str,
         workbook_name: Optional[str] = None,
         strict: bool = False,
-    ) -> Workbook:
-        """Loads, validates, and parses a workbook into a typed model.
-
-        Args:
-            source_path: Path or identifier of the workbook to load.
-            workbook_name: Optional human-friendly name for the
-                workbook.
-            strict: Whether a validation failure should raise instead of
-                producing a flagged workbook.
-
-        Returns:
-            A fully populated :class:`~models.workbook.Workbook`.
-        """
-        ...
+    ) -> Workbook: ...
 
 
 class WorkbookService:
-    """Business logic façade for obtaining and inspecting workbooks.
-
-    :class:`WorkbookService` is the entry point dashboard pages should
-    use to get a parsed :class:`~models.workbook.Workbook` and to answer
-    simple, structural questions about it (its metadata, sheets,
-    sections, units, date range, and validation status). It does not
-    perform any KPI math or chart construction; those belong to
-    dedicated KPI and chart-building services that consume the
-    :class:`~models.workbook.Workbook` this service returns.
-
-    Attributes:
-        repository: The injected repository used to load, validate, and
-            parse workbooks.
-    """
+    """Business logic façade for obtaining and inspecting workbooks."""
 
     def __init__(self, repository: WorkbookRepositoryLike) -> None:
-        """Initializes the service with its repository dependency.
-
-        Args:
-            repository: An object satisfying
-                :class:`WorkbookRepositoryLike`.
-        """
         self.repository = repository
 
     # ------------------------------------------------------------------
@@ -89,99 +50,59 @@ class WorkbookService:
         workbook_name: Optional[str] = None,
         strict: bool = False,
     ) -> Workbook:
-        """Retrieves the fully parsed Workbook model for a source path.
-
-        This delegates entirely to the injected repository; no
-        additional loading, validation, or parsing logic is performed
-        here.
-
-        Args:
-            source_path: Path or identifier of the workbook to load.
-            workbook_name: Optional human-friendly name for the
-                workbook.
-            strict: Whether a validation failure should raise instead of
-                producing a validation-flagged workbook.
-
-        Returns:
-            A fully populated :class:`~models.workbook.Workbook`.
-
-        Raises:
-            data.repository.WorkbookRepositoryError: If the repository
-                cannot produce a workbook (propagated unchanged).
-        """
-        return self.repository.get_workbook(
-            source_path=source_path,
-            workbook_name=workbook_name,
-            strict=strict,
-        )
+        _dbg("ENTER services.workbook_service.WorkbookService.get_workbook")  # DEBUG
+        try:
+            _dbg("BEFORE repository.get_workbook()")  # DEBUG
+            workbook = self.repository.get_workbook(
+                source_path=source_path,
+                workbook_name=workbook_name,
+                strict=strict,
+            )
+            _dbg("AFTER repository.get_workbook()")  # DEBUG
+            _dbg("EXIT services.workbook_service.WorkbookService.get_workbook (success)")  # DEBUG
+            return workbook
+        except Exception:
+            _dbg("EXCEPTION in WorkbookService.get_workbook")  # DEBUG
+            _dbg(traceback.format_exc())  # DEBUG
+            raise
 
     # ------------------------------------------------------------------
     # Metadata
     # ------------------------------------------------------------------
 
     def get_metadata(self, workbook: Workbook) -> Optional[WorkbookMetadata]:
-        """Returns a workbook's descriptive file metadata.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            The workbook's :class:`~models.workbook.WorkbookMetadata`,
-            or ``None`` if none was recorded.
-        """
-        return workbook.metadata
+        _dbg("ENTER WorkbookService.get_metadata")  # DEBUG
+        result = workbook.metadata
+        _dbg("EXIT WorkbookService.get_metadata")  # DEBUG
+        return result
 
     # ------------------------------------------------------------------
     # Sheets
     # ------------------------------------------------------------------
 
     def list_available_sheets(self, workbook: Workbook) -> List[str]:
-        """Lists every sheet name discovered in the source workbook file.
-
-        This includes sheets that could not be parsed into a
-        :class:`~models.section.Section` (for example, sheets skipped
-        for lacking a detectable header row); use
-        :meth:`list_sections` to see only the sheets that yielded usable
-        data.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            The available sheet names, in workbook order.
-        """
-        return list(workbook.available_sheets)
+        _dbg("ENTER WorkbookService.list_available_sheets")  # DEBUG
+        result = list(workbook.available_sheets)
+        _dbg("EXIT WorkbookService.list_available_sheets")  # DEBUG
+        return result
 
     # ------------------------------------------------------------------
     # Sections
     # ------------------------------------------------------------------
 
     def list_sections(self, workbook: Workbook) -> List[Section]:
-        """Lists every section successfully discovered in the workbook.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            The workbook's top-level :class:`~models.section.Section`
-            instances, in discovery order.
-        """
-        return list(workbook.sections)
+        _dbg("ENTER WorkbookService.list_sections")  # DEBUG
+        result = list(workbook.sections)
+        _dbg("EXIT WorkbookService.list_sections")  # DEBUG
+        return result
 
     def get_section(self, workbook: Workbook, name: str) -> Optional[Section]:
-        """Finds a single section by its normalized ``name``.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-            name: The section's normalized (slugified) name to match.
-
-        Returns:
-            The matching :class:`~models.section.Section`, or ``None``
-            if no section with that name was found.
-        """
+        _dbg("ENTER WorkbookService.get_section")  # DEBUG
         for section in workbook.sections:
             if section.name == name:
+                _dbg("EXIT WorkbookService.get_section (found)")  # DEBUG
                 return section
+        _dbg("EXIT WorkbookService.get_section (not found)")  # DEBUG
         return None
 
     # ------------------------------------------------------------------
@@ -189,83 +110,48 @@ class WorkbookService:
     # ------------------------------------------------------------------
 
     def list_units(self, workbook: Workbook) -> List[str]:
-        """Lists every distinct unit of measure used across the workbook.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            The distinct units encountered anywhere in the workbook, in
-            first-seen order.
-        """
-        return list(workbook.units)
+        _dbg("ENTER WorkbookService.list_units")  # DEBUG
+        result = list(workbook.units)
+        _dbg("EXIT WorkbookService.list_units")  # DEBUG
+        return result
 
     # ------------------------------------------------------------------
     # Date range
     # ------------------------------------------------------------------
 
     def get_date_range(self, workbook: Workbook) -> Optional[DateRange]:
-        """Returns the overall date range covered by the workbook.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            The workbook's overall :class:`~models.section.DateRange`,
-            or ``None`` if no section carried timestamp data.
-        """
-        return workbook.date_range
+        _dbg("ENTER WorkbookService.get_date_range")  # DEBUG
+        result = workbook.date_range
+        _dbg("EXIT WorkbookService.get_date_range")  # DEBUG
+        return result
 
     # ------------------------------------------------------------------
     # Validation status
     # ------------------------------------------------------------------
 
     def get_validation_status(self, workbook: Workbook) -> ValidationStatus:
-        """Returns the workbook's overall validation status.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            The workbook's :class:`~models.workbook.ValidationStatus`.
-        """
-        return workbook.validation_status
+        _dbg("ENTER WorkbookService.get_validation_status")  # DEBUG
+        result = workbook.validation_status
+        _dbg("EXIT WorkbookService.get_validation_status")  # DEBUG
+        return result
 
     def is_valid(self, workbook: Workbook) -> bool:
-        """Whether the workbook is valid, with or without warnings.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            ``True`` if the workbook's status is ``VALID`` or
-            ``VALID_WITH_WARNINGS``; ``False`` otherwise.
-        """
-        return workbook.validation_status in (
+        _dbg("ENTER WorkbookService.is_valid")  # DEBUG
+        result = workbook.validation_status in (
             ValidationStatus.VALID,
             ValidationStatus.VALID_WITH_WARNINGS,
         )
+        _dbg("EXIT WorkbookService.is_valid")  # DEBUG
+        return result
 
     def get_warnings(self, workbook: Workbook) -> List[str]:
-        """Lists the non-fatal warnings raised while loading the workbook.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            The accumulated warning messages, in the order they were
-            raised.
-        """
-        return list(workbook.warnings)
+        _dbg("ENTER WorkbookService.get_warnings")  # DEBUG
+        result = list(workbook.warnings)
+        _dbg("EXIT WorkbookService.get_warnings")  # DEBUG
+        return result
 
     def get_errors(self, workbook: Workbook) -> List[str]:
-        """Lists the fatal errors raised while loading the workbook.
-
-        Args:
-            workbook: The parsed workbook to inspect.
-
-        Returns:
-            The accumulated error messages, in the order they were
-            raised.
-        """
-        return list(workbook.errors)
+        _dbg("ENTER WorkbookService.get_errors")  # DEBUG
+        result = list(workbook.errors)
+        _dbg("EXIT WorkbookService.get_errors")  # DEBUG
+        return result
