@@ -217,9 +217,9 @@ def _github_loader_adapter() -> object:
             data_only=True,
         )
 
-        logger.info("4. openpyxl finished")  
+       logger.info("4. openpyxl finished")  
 
-        return SimpleNamespace(
+       return SimpleNamespace(
             raw_workbook=raw_workbook,
             source_path=source_path,
             metadata=None,
