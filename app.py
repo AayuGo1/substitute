@@ -224,31 +224,23 @@ def _github_loader_adapter() -> object:
         satisfying ``data.repository.SupportsRawWorkbook``.
     """
 
-    def _load(source_path: str) -> SimpleNamespace:
-        try:
-            workbook_stream = load_workbook_from_github()
-            raw_workbook = load_workbook(
-                filename=workbook_stream,
-                data_only=True,
-            )
-        except Exception as exc:  # noqa: BLE001 - normalized by WorkbookRepository
-            return SimpleNamespace(
-                raw_workbook=None,
-                source_path=source_path,
-                metadata=None,
-                success=False,
-                error=str(exc),
-            )
-        return SimpleNamespace(
-            raw_workbook=raw_workbook,
-            source_path=source_path,
-            metadata=None,
-            success=True,
-            error=None,
-        )
+   def _load(source_path: str) -> SimpleNamespace:
+    print("1. Calling GitHub loader")
 
-    return SimpleNamespace(load=_load)
+    workbook_stream = load_workbook_from_github()
 
+    print("2. GitHub loader returned")
+
+    workbook_stream.seek(0)
+
+    print("3. Before openpyxl.load_workbook")
+
+    raw_workbook = load_workbook(
+        filename=workbook_stream,
+        data_only=True,
+    )
+
+    print("4. openpyxl finished")
 
 def _passthrough_validator_adapter() -> object:
     """
