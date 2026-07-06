@@ -208,11 +208,11 @@ def _github_loader_adapter() -> object:
 
        logger.info("2. GitHub loader returned")
 
-        workbook_stream.seek(0)
+       workbook_stream.seek(0)
 
-        logger.info("3. Before openpyxl.load_workbook")
+       logger.info("3. Before openpyxl.load_workbook")
 
-        raw_workbook = load_workbook(
+       raw_workbook = load_workbook(
             filename=workbook_stream,
             data_only=True,
         )
